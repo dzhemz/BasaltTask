@@ -1,15 +1,12 @@
 plugins {
     id 'java'
     id 'application'
+    id 'org.graalvm.buildtools.native' version '0.9.12'
 }
 
 group 'org.example'
 version '1.0-SNAPSHOT'
 
-def versions = [
-        AkkaVersion: "2.7.0",
-        ScalaBinary: "2.13"
-]
 
 repositories {
     mavenCentral()
@@ -26,5 +23,14 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+
+graalvmNative {
+    binaries.all {
+        resources.autodetect()
+    }
+    toolchainDetection = false
+}
+
+
 
 mainClassName = 'RequestSender'

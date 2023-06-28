@@ -7,6 +7,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
+import java.util.stream.Collectors;
 
 
 public class RequestSender {
@@ -14,35 +15,52 @@ public class RequestSender {
     final static ObjectMapper objectMapper = new ObjectMapper();
     final static JavaType type = objectMapper.getTypeFactory().
             constructCollectionType(Set.class, PackageInfo.class);
+
+    final static Map<Integer, String> tasksNames = Map.of(
+            1, "\"unique_from_first_branch\":",
+            2, "\"unique_from_second_branch\":",
+            3, "\"newer_from_first_than_in_second\":");
     final static JavaType type2 = objectMapper.getTypeFactory().constructCollectionType(List.class, PackageInfo.class);
 
-    public static int order(char c)
-    {
-        if (Character.isDigit(c))
-            return c;
-        else if (Character.isAlphabetic(c))
-            return c;
-        else if (c == '~')
-            return -1;
-        else if (c != ' ')
-            return c + 256;
-        else
-            return 0;
+    public static void executeTask(String firstBranch, String secondBranch, String requiredTasks) throws IOException, InterruptedException {
+        var firstPackages = getPackages(firstBranch);
+        var secondPackages = getPackages(secondBranch);
+
+        HashMap<String, PackageInfo> secondMap = new HashMap<>();
+        assert secondPackages != null;
+        secondPackages.forEach(elem -> secondMap.put(elem.getName(), elem));
+
+        assert firstPackages != null;
+
+        var result = new HashMap<Integer, List<PackageInfo>>();
+        if (requiredTasks.contains("1")) result.put(1, onlyFirstContains(firstPackages, secondPackages));
+        if (requiredTasks.contains("2")) result.put(2, onlyFirstContains(secondPackages, firstPackages));
+        if (requiredTasks.contains("3")) result.put(3, getMoreModernFromFirst(firstPackages, secondMap));
+
+        System.out.println(resultToString(result));
     }
 
-    public static int cmpFragment(String first, String second) {
-
-        var firstSize = first.length();
-        var secondSize = second.length();
-
-        for (int i = 0; i < Integer.min(firstSize, secondSize); i++){
-            if (order(first.charAt(i)) - order(second.charAt(i)) > 0){
-                return 1;
-            } else if (order(first.charAt(i)) - order(second.charAt(i)) < 0) {
-                return -1;
-            }
+    public static Set<PackageInfo> getPackages(String branch) throws IOException, InterruptedException {
+        var request = HttpRequest.newBuilder().
+                uri(URI.create("https://rdb.altlinux.org/api/export/branch_binary_packages/" + branch))
+                .build();
+        var response =
+                client.send(request, HttpResponse.BodyHandlers.ofLines());
+        Optional<String> result = response.body().findFirst();
+        if (result.isPresent()) {
+            var resultString = result.get();
+            String substring = resultString.substring(resultString.indexOf("["), resultString.indexOf("]") + 1);
+            return objectMapper.readValue(substring, type);
         }
-        return firstSize - secondSize;
+        return null;
+    }
+
+    public static List<PackageInfo> onlyFirstContains(Set<PackageInfo> first, Set<PackageInfo> second){
+        return first.stream().filter(taskPackage -> !second.contains(taskPackage)).toList();
+    }
+
+    public static List<PackageInfo> getMoreModernFromFirst(Set<PackageInfo> first, Map<String, PackageInfo> second){
+        return first.stream().filter(PackageInfo -> checkPackage(PackageInfo, second)).toList();
     }
 
     public static boolean checkPackage(PackageInfo taskPackage1, Map<String, PackageInfo> taskPackageMap){
@@ -62,49 +80,43 @@ public class RequestSender {
         }
     }
 
-    public static void executeTask(String firstBranch, String secondBranch) throws IOException, InterruptedException {
-        var firstPackages = getPackages(firstBranch);
-        var secondPackages = getPackages(secondBranch);
+    public static int cmpFragment(String first, String second) {
 
-        HashMap<String, PackageInfo> secondMap = new HashMap<>();
-        assert secondPackages != null;
-        secondPackages.forEach(elem -> secondMap.put(elem.getName(), elem));
+        var firstSize = first.length();
+        var secondSize = second.length();
 
-        assert firstPackages != null;
-        var task1 = firstPackages.stream().filter(taskPackage -> !secondPackages.contains(taskPackage)).toList();
-        var task2 = secondPackages.stream().filter(taskPackage -> !firstPackages.contains(taskPackage)).toList();
-        var task3 = firstPackages
-                .stream()
-                .filter(PackageInfo -> checkPackage(PackageInfo, secondMap)).toList();
-
-
-        var result = String.format("{\"first_branch\":%s," +
-                "\"unique_from_first_branch\":%s," +
-                "second_branch:%s," +
-                "\"unique_from_second_branch\":%s," +
-                "\"newer_from_first_than_in_second\":%s}",
-                firstBranch,
-                objectMapper.writerWithType(type2).writeValueAsString(task1),
-                secondBranch,
-                objectMapper.writerWithType(type2).writeValueAsString(task2),
-                objectMapper.writerWithType(type2).writeValueAsString(task3)
-                );
-        System.out.print(result);
-
-
-    }
-    public static Set<PackageInfo> getPackages(String branch) throws IOException, InterruptedException {
-        var request = HttpRequest.newBuilder().
-                uri(URI.create("https://rdb.altlinux.org/api/export/branch_binary_packages/" + branch))
-                .build();
-        var response =
-                client.send(request, HttpResponse.BodyHandlers.ofLines());
-        Optional<String> result = response.body().findFirst();
-        if (result.isPresent()) {
-            var resultString = result.get();
-            String substring = resultString.substring(resultString.indexOf("["), resultString.indexOf("]") + 1);
-            return objectMapper.readValue(substring, type);
+        for (int i = 0; i < Integer.min(firstSize, secondSize); i++){
+            if (order(first.charAt(i)) - order(second.charAt(i)) > 0){
+                return 1;
+            } else if (order(first.charAt(i)) - order(second.charAt(i)) < 0) {
+                return -1;
+            }
         }
-        return null;
+        return firstSize - secondSize;
+    }
+
+    public static int order(char c)
+    {
+        if (Character.isDigit(c))
+            return c;
+        else if (Character.isAlphabetic(c))
+            return c;
+        else if (c == '~')
+            return -1;
+        else if (c != ' ')
+            return c + 256;
+        else
+            return 0;
+    }
+
+    public static String resultToString(Map<Integer, List<PackageInfo>> requiredTasks){
+        return "{" + requiredTasks.keySet().stream().map(key -> {
+            try {
+                return tasksNames.get(key) + objectMapper.writerWithType(type2).writeValueAsString(requiredTasks.get(key));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }).collect(Collectors.joining(", ")) + "}";
     }
 }
+
